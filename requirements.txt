@@ -1,0 +1,7 @@
+# Core — CPU-only PyTorch (small download, ~180 MB)
+--index-url https://download.pytorch.org/whl/cpu
+torch>=2.1.0
+numpy>=1.24.0
+
+# Optional but recommended for richer complexity features
+radon>=6.0.1

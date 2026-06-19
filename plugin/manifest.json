@@ -1,0 +1,78 @@
+{
+  "name": "coding-telemetry-feedback-net",
+  "version": "1.0.0",
+  "description": "Offline neural network code critic — analyzes Python code quality, finds bugs/style/perf/security issues, and suggests refactorings. Runs 100% locally with no API calls.",
+  "author": "AGNT User",
+  "icon": "brain",
+  "tools": [
+    {
+      "type": "analyze-code",
+      "entryPoint": "./analyze-code.js",
+      "schema": {
+        "title": "Code Feedback Neural Net",
+        "category": "action",
+        "type": "analyze-code",
+        "icon": "brain",
+        "description": "Analyze Python code quality using a local neural network. Returns quality score, categorized issues, refactoring suggestions, and positive notes. Runs 100% offline — no API calls.",
+        "parameters": {
+          "code": {
+            "type": "string",
+            "inputType": "codearea",
+            "description": "Python source code to analyze",
+            "required": true
+          },
+          "filePath": {
+            "type": "string",
+            "inputType": "text",
+            "description": "Optional file path for context-aware analysis (e.g. src/utils/helper.py)",
+            "required": false
+          },
+          "telemetry": {
+            "type": "string",
+            "inputType": "textarea",
+            "description": "Optional JSON telemetry data: git diffs, edit counts, file age, etc. Example: {\"num_edits\": 5, \"num_additions\": 20}",
+            "required": false
+          }
+        },
+        "outputs": {
+          "quality_score": {
+            "type": "number",
+            "description": "Overall code quality score from 0.0 to 1.0"
+          },
+          "quality_label": {
+            "type": "string",
+            "description": "Human-readable quality label (Excellent/Good/Acceptable/Needs Improvement/Poor/Critical)"
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Model confidence in its feedback (0.0 to 1.0)"
+          },
+          "issues": {
+            "type": "string",
+            "description": "JSON array of categorized issues (bugs, style, performance, security, maintainability, pythonic)"
+          },
+          "suggestions": {
+            "type": "string",
+            "description": "JSON array of ranked refactoring suggestions"
+          },
+          "positive_notes": {
+            "type": "string",
+            "description": "JSON array of positive observations about the code"
+          },
+          "feedback_text": {
+            "type": "string",
+            "description": "Full human-readable feedback report with emoji indicators"
+          },
+          "inference_time_ms": {
+            "type": "number",
+            "description": "Inference time in milliseconds"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message if analysis failed"
+          }
+        }
+      }
+    }
+  ]
+}

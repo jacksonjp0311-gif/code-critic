@@ -1,0 +1,8 @@
+{
+  "name": "coding-telemetry-feedback-net",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Offline neural network code critic — analyzes Python code quality",
+  "main": "analyze-code.js",
+  "dependencies": {}
+}
