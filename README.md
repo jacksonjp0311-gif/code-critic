@@ -1,400 +1,174 @@
 # 🧠 code-critic
 
-> **Offline neural network code critic for AGNT.** A compact 1.94M-parameter transformer that analyzes Python code quality, detects bugs/style/perf/security issues, and suggests refactorings — all running 100% locally on CPU in under 70ms. Ships as a first-class AGNT plugin (3.37 MB) with workflow node support and fine-tuning on your own codebase.
+> **Offline neural network code critic.** A compact transformer that analyzes Python code quality, detects bugs/style/perf/security issues, and suggests refactorings — all running 100% locally on CPU. No API calls, no cloud, no internet required.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.1+-ee4c2c.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Size](https://img.shields.io/badge/plugin%20size-3.37%20MB-lightgrey.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-43%2F%20passing-brightgreen.svg)](#)
+[![Plugin Size](https://img.shields.io/badge/plugin-5.64%20MB-lightgrey.svg)]()
+[![Model Size](https://img.shields.io/badge/model-2.51%20MB-lightgrey.svg)]()
+[![Training Data](https://img.shields.io/badge/training-5000%20samples-green.svg)]()
 
 ---
 
-## Table of Contents
+## What's New in v2
 
-- [What It Is](#what-it-is)
-- [Key Features](#key-features)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Usage](#usage)
-  - [Command Line](#command-line)
-  - [Python API](#python-api)
-  - [AGNT Plugin](#agnt-plugin)
-- [Training](#training)
-  - [Synthetic Pretraining](#synthetic-pretraining)
-  - [Self-Supervised on Your Codebase](#self-supervised-on-your-codebase)
-  - [Fine-Tuning](#fine-tuning)
-- [Output Format](#output-format)
-- [Model Specs](#model-specs)
-- [Project Structure](#project-structure)
-- [AGNT Workflow Example](#agnt-workflow-example)
-- [Benchmarks](#benchmarks)
-- [Roadmap](#roadmap)
-- [License](#license)
+The v1 model used only hand-crafted AST features (111 structural stats → 128-dim vector). It was fast but shallow — it couldn't actually *read* code.
 
----
+**v2 is fundamentally different:**
 
-## What It Is
+| | v1 | v2 |
+|---|---|---|
+| **Input** | 111 AST stats | Actual code tokens + AST stats |
+| **Tokenizer** | None (feature engineering) | 465-vocab code-aware tokenizer |
+| **Architecture** | Feature projection → Transformer | Dual-input: Token encoder + Feature projector → Fusion |
+| **Training data** | 600 synthetic good/bad pairs | 5000 labeled samples across 6 categories with augmentation |
+| **Pretraining** | None | Masked language modeling (MLM) |
+| **Parameters** | 1.94M | 1.31M |
+| **Model size** | 3.73 MB | 2.51 MB |
+| **Plugin size** | 3.37 MB | 5.64 MB |
+| **Inference** | 41–70 ms | ~2–4 s (first run, then cached) |
 
-`code-critic` is a **production-ready neural network** that acts as an always-available "code critic." Feed it a Python code snippet or full file, and it returns:
+### What the model actually sees now
 
-- **Overall quality score** (0–1)
-- **Categorized issues** (bugs, style, performance, security, maintainability, pythonic-ness)
-- **Ranked refactoring suggestions**
-- **Positive notes** when code is strong
-- **Confidence score** on its own feedback
+```python
+# v1 saw: {"ast_count_FunctionDef": 1, "ast_max_depth": 3, "cc_avg": 2.5, ...}
+# v2 sees: ["def", "fibonacci", "(", "n", ":", "int", ")", ":", "if", "n", "<=", "1", ...]
+#          PLUS the same structural features as v1
+```
 
-It runs **100% offline** — no API calls, no cloud, no internet required. The entire plugin is **3.37 MB** and inference takes **41–70 ms** on CPU.
+The tokenizer recognizes 465 Python-specific tokens including:
+- All keywords, builtins, common methods
+- **Security-sensitive patterns**: `eval(`, `exec(`, `os.system`, `subprocess.call`, `pickle.loads`, `yaml.load`, `shell=True`, hardcoded secrets
+- **Compound idioms**: `is not`, `not in`, `isinstance(`, `if __name__ == "__main__"`, `super().__init__`
+- **SQL injection patterns**: string concatenation with SQL keywords
 
----
+### Training data
 
-## Key Features
+5000 samples generated from 72 base templates covering:
+- **20 bug patterns**: bare except, mutable defaults, off-by-one, resource leaks, race conditions
+- **8 style violations**: PEP 8 issues, naming, spacing, import style
+- **8 performance issues**: O(n²) patterns, string concat in loops, missing generators
+- **10 security vulnerabilities**: command injection, SQL injection, XSS, hardcoded secrets, unsafe deserialization
+- **6 maintainability issues**: deep nesting, god classes, too many params
+- **10 non-pythonic patterns**: manual loops, missing builtins, no context managers
+- **10 good code examples**: clean, typed, documented, idiomatic
 
-- 🧠 **Real neural network** — 1.94M-parameter transformer, not a prompt wrapper
-- ⚡ **Fast** — 41–70 ms inference on consumer CPU
-- 📦 **Tiny** — 3.37 MB plugin (model + code + weights)
-- 🔒 **Fully offline** — zero network calls after installation
-- 🔧 **Fine-tunable** — learn from your own codebase
-- 🔌 **AGNT plugin** — first-class workflow node integration
-- ✅ **Tested** — 43/43 unit tests passing
+Each sample has per-category labels (not just good/bad), enabling multi-task learning.
 
 ---
+
+## Quick Start
+
+```bash
+# Install
+pip install -r requirements.txt
+
+# Analyze a file
+python analyze_v2.py --file my_script.py
+
+# Analyze a string
+python analyze_v2.py --code "def foo(): pass"
+
+# JSON output
+python analyze_v2.py --file my_script.py --json
+
+# Train on your own codebase
+python train_v2.py --epochs-supervised 50 --n-samples 5000 --output code_critic_v2.pt
+```
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Input: Python Code                      │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Feature Extraction                         │
-│  ┌──────────┐  ┌──────────┐  ┌────────┐  ┌──────────────┐  │
-│  │ AST Walk │  │ Tokenize │  │  Radon │  │  Telemetry   │  │
-│  │ 40 feats │  │ 20 feats │  │ 18 feat │  │  8 feats     │  │
-│  └──────────┘  └──────────┘  └────────┘  └──────────────┘  │
-│                    → 111 raw features                        │
-│                    → log-scale + L2 normalize                │
-│                    → 128-dim float32 vector                  │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Transformer Encoder (1.94M params)              │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  Input Projection: Linear(128 → 192) + GELU        │    │
-│  │  Sequence Projection: Linear(192 → 192×4)          │    │
-│  │  Positional Embeddings (learned, length 4)          │    │
-│  │  CLS Token + Transformer × 4 layers                 │    │
-│  │  (hidden=192, heads=4, ff_dim=576, pre-norm)        │    │
-│  │  Pooling: CLS + Mean → 384-dim                      │    │
-│  └─────────────────────────────────────────────────────┘    │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-              ┌────────────┼────────────┬──────────────┐
-              ▼            ▼            ▼              ▼
-┌──────────────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐
-│  Quality Score   │ │  Issue   │ │  Conf.   │ │ Reconstruct  │
-│  Head → [0,1]   │ │ 6-class  │ │ → [0,1]  │ │ Head (SSL)   │
-└──────────────────┘ └──────────┘ └──────────┘ └──────────────┘
-              │            │            │              │
-              └────────────┴────────────┴──────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Feedback Generator                         │
-│  Template-based NL generation from model outputs             │
-│  → Quality label + emoji                                    │
-│  → Categorized issues with severity (critical/high/med/low) │
-│  → Ranked refactoring suggestions                           │
-│  → Positive notes for strong code                           │
-└─────────────────────────────────────────────────────────────┘
+└──────────────────┬──────────────────────┬───────────────────┘
+                   │                      │
+          ┌────────▼────────┐    ┌───────▼────────┐
+          │  Code Tokenizer  │    │  AST + Radon   │
+          │  (465 vocab)     │    │  (111 features) │
+          │  Compound pattern│    │  → 128-dim     │
+          │  matching        │    │                │
+          └────────┬────────┘    └───────┬────────┘
+                   │                      │
+          ┌────────▼────────┐    ┌───────▼────────┐
+          │  Embedding       │    │  Feature       │
+          │  (465 → 128)     │    │  Projection    │
+          │  + Pos encoding  │    │  (128 → 128)   │
+          └────────┬────────┘    └───────┬────────┘
+                   │                      │
+          ┌────────▼──────────────────────▼────────┐
+          │         Transformer Encoder × 4         │
+          │         (128 hidden, 4 heads)            │
+          │         + Mean pooling                   │
+          └────────┬──────────────────────┬────────┘
+                   │                      │
+          ┌────────▼──────────────────────▼────────┐
+          │         Fusion Layer (256 → 256)        │
+          │         Concatenate token + feature     │
+          └────────┬───────┬──────────┬────────────┘
+                   │       │          │
+              ┌────▼──┐ ┌──▼───┐ ┌───▼────┐
+              │Quality│ │Issues│ │Confidence│
+              │Score  │ │6-class│ │Score    │
+              └───────┘ └──────┘ └─────────┘
 ```
-
----
-
-## Quick Start
-
-### 1. Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Train the Model (Synthetic Pretraining)
-
-```bash
-python train.py --mode synthetic --epochs 50 --output code_feedback_model.pt
-```
-
-This takes ~2 minutes on CPU and produces a reasonable starting model.
-
-### 3. Analyze Code
-
-```bash
-# Analyze a file
-python analyze.py --file my_script.py
-
-# Analyze a code string
-python analyze.py --code "def foo(): pass"
-
-# JSON output for scripting
-python analyze.py --file my_script.py --json
-
-# With git/edit telemetry
-python analyze.py --file my_script.py --telemetry '{"num_edits": 5, "num_additions": 20}'
-```
-
-### 4. Run Tests
-
-```bash
-python test_model.py
-```
-
----
-
-## Usage
-
-### Command Line
-
-```bash
-# Basic file analysis
-python analyze.py --file src/my_module.py
-
-# Code string
-python analyze.py --code "import os\ndef run(cmd): os.system(cmd)"
-
-# JSON output (for CI/CD integration)
-python analyze.py --file src/my_module.py --json
-
-# With telemetry context
-python analyze.py --file src/my_module.py --telemetry '{"num_edits": 15, "num_authors": 3, "file_age_days": 30}'
-
-# Custom model path
-python analyze.py --file src/my_module.py --model path/to/custom_model.pt
-```
-
-### Python API
-
-```python
-from analyze import analyze_code
-
-result = analyze_code(
-    code="def hello():\n    print('world')",
-    file_path="greetings.py",
-    telemetry={"num_edits": 3}
-)
-
-print(result["quality_score"])   # 0.8723
-print(result["quality_label"])   # "Good"
-print(result["confidence"])      # 0.936
-print(result["feedback_text"])   # Full human-readable report
-
-for issue in result["issues"]:
-    print(f"[{issue['severity']}] {issue['category']}: {issue['description']}")
-```
-
-### AGNT Plugin
-
-The plugin is distributed as a `.agnt` file. To install:
-
-1. Copy `code-critic.agnt` to your AGNT plugins folder
-2. Or use AGNT's plugin installer: `/api/plugins/install-file`
-3. Hot-reload: `/api/plugins/reload`
-
-The `analyze-code` tool accepts:
-- `code` (string, required) — Python source code
-- `filePath` (string, optional) — file path for context
-- `telemetry` (string/JSON, optional) — git diffs, edit counts, etc.
-
-Returns: `quality_score`, `quality_label`, `confidence`, `issues`, `suggestions`, `positive_notes`, `feedback_text`, `inference_time_ms`.
-
----
-
-## Training
-
-### Synthetic Pretraining
-
-Generates 600 labeled good/bad code pairs and trains all heads simultaneously:
-
-```bash
-python train.py --mode synthetic --epochs 50 --output code_feedback_model.pt
-```
-
-Training converges in ~24 seconds on CPU. Loss typically drops from ~0.50 to ~0.23.
-
-### Self-Supervised on Your Codebase
-
-Scans your project for `.py` files and trains via masked feature prediction (no labels needed):
-
-```bash
-python train.py --mode selfsupervised --data-dir ./my_project --epochs 20
-```
-
-This learns the structural patterns of your codebase, making the critic more calibrated to your style.
-
-### Fine-Tuning
-
-Continue training a pretrained model on your codebase with a lower learning rate:
-
-```bash
-python train.py --mode finetune --data-dir ./my_project \
-    --resume code_feedback_model.pt --epochs 10 --lr 1e-4
-```
-
----
-
-## Output Format
-
-```json
-{
-  "quality_score": 0.8723,
-  "quality_label": "Good",
-  "quality_emoji": "✅",
-  "confidence": 0.936,
-  "issues": [
-    {
-      "category": "style",
-      "severity": "low",
-      "probability": 0.15,
-      "description": "Minor style nits: consider consistent quote usage."
-    }
-  ],
-  "suggestions": [
-    {
-      "priority": "low",
-      "category": "style",
-      "suggestion": "Minor style nits: consider consistent quote usage.",
-      "confidence": 0.14
-    }
-  ],
-  "positive_notes": [
-    "Clean, well-structured code. 👍",
-    "Well-documented with clear docstrings."
-  ],
-  "feedback_text": "✅ Code Quality: Good (87.2%)\n   Model Confidence: 93.6%\n\n📋 Issues Found:\n   ...",
-  "inference_time_ms": 70
-}
-```
-
----
 
 ## Model Specs
 
 | Property | Value |
 |----------|-------|
-| Architecture | Transformer encoder (4 layers, 192 hidden, 4 heads) |
-| Parameters | 1,942,984 (~1.94M) |
-| Feature dimension | 128 |
-| Issue categories | 6 (bugs, style, perf, security, maintainability, pythonic) |
-| Model format | PyTorch state dict, float16 quantized |
-| Disk size | 3.73 MB |
-| Plugin size (.agnt) | 3.37 MB |
-| Inference time | 41–70 ms (CPU) |
-| Training time | ~24s (50 epochs, synthetic, CPU) |
-| Python | 3.10+ |
-| PyTorch | 2.1+ (CPU) |
+| Parameters | 1,305,049 (1.31M) |
+| Vocabulary | 465 tokens |
+| Hidden dim | 256 |
+| Layers | 4 |
+| Attention heads | 4 |
+| Max sequence length | 256 tokens |
+| Model size (float16) | 2.51 MB |
+| Plugin size (.agnt) | 5.64 MB |
+| Training data | 5000 labeled samples |
+| Training time | ~52 min (50 epochs, CPU) |
+| Inference time | ~2–4 s (first run), ~50ms (cached) |
 
-### Size Comparison
+## AGNT Plugin
 
-| Model | Parameters | Disk Size |
-|-------|-----------|-----------|
-| DistilBERT | 66M | ~250 MB |
-| BERT-base | 110M | ~440 MB |
-| **code-critic** | **1.94M** | **3.73 MB** |
+The plugin is distributed as a `.agnt` file. Current version: **v2.0.0**.
 
----
+Tool: `analyze-code`  
+Inputs: `code` (string), `filePath` (optional), `telemetry` (optional)  
+Outputs: `quality_score`, `quality_label`, `confidence`, `issues`, `suggestions`, `positive_notes`, `feedback_text`, `inference_time_ms`, `model_version`
 
 ## Project Structure
 
 ```
 code-critic/
-├── README.md                    # This file
-├── LICENSE                      # MIT License
-├── requirements.txt             # Python dependencies
-├── .gitignore                   # Git ignore rules
+├── README.md                      # This file
+├── LICENSE                        # MIT
+├── requirements.txt               # torch, numpy, radon
+├── .gitignore
 │
-├── code_features.py             # Feature extraction (AST, tokenize, radon)
-├── code_feedback_model.py       # PyTorch model definition
-├── feedback_generator.py        # NL feedback generation
-├── train.py                     # Training script (3 modes)
-├── analyze.py                   # CLI + Python API entry point
-├── test_model.py                # 43 unit tests
-├── code_feedback_model.pt       # Pretrained model weights
+├── code_critic_tokenizer.py       # 465-vocab code-aware tokenizer
+├── model_v2.py                    # Dual-input transformer model
+├── data_generator.py              # 5000 labeled samples from 72 templates
+├── train_v2.py                    # 3-phase training script
+├── analyze_v2.py                  # CLI + Python API
+├── code_critic_v2.pt              # Trained model weights (2.51 MB)
 │
-└── plugin/                      # AGNT plugin package
-    ├── manifest.json            # Plugin metadata + tool schema
-    ├── package.json             # ES module config
-    ├── analyze-code.js          # JS tool (spawns Python subprocess)
-    ├── code_features.py         # (copied)
-    ├── code_feedback_model.py   # (copied)
-    ├── code_feedback_model.pt   # (copied)
-    ├── feedback_generator.py    # (copied)
-    ├── analyze.py               # (copied)
-    └── train.py                 # (copied)
+├── code_features.py               # AST/token/radon feature extraction (v1 compat)
+├── code_feedback_model.py         # v1 model (kept for fallback)
+├── feedback_generator.py          # Template-based NL feedback
+├── analyze.py                     # v1 CLI (kept for fallback)
+├── train.py                       # v1 training (kept for fallback)
+├── test_model.py                  # v1 tests
+│
+└── plugin/                        # AGNT plugin package
+    ├── manifest.json              # v2.0.0 metadata
+    ├── analyze-code.js            # JS tool wrapper
+    ├── analyze_v2.py              # v2 Python entry point
+    ├── code_critic_v2.pt          # Bundled model weights
+    └── [all v2 source files]
 ```
-
----
-
-## AGNT Workflow Example
-
-Use `code-critic` in an automated code review loop:
-
-```
-[Code Generation Agent]
-        │
-        ▼
-[code-critic: analyze-code] ──→ quality_score, issues, suggestions
-        │
-        ▼
-[Condition: quality >= 0.75?]
-    │           │
-   YES          NO
-    │           │
-    ▼           ▼
- [Done]    [Refactor Agent]
-              │ (feedback + code)
-              ▼
-         [code-critic: analyze-code] ──→ final feedback
-              │
-              ▼
-            [Done]
-```
-
-See [WORKFLOW_EXAMPLE.md](WORKFLOW_EXAMPLE.md) for detailed setup instructions.
-
----
-
-## Benchmarks
-
-Tested on CPU (Intel/AMD, no GPU):
-
-| Metric | Value |
-|--------|-------|
-| Feature extraction (100-line file) | ~15 ms |
-| Model inference | ~30 ms |
-| End-to-end (extract + infer + generate) | 41–70 ms |
-| Memory footprint | ~50 MB RAM |
-| Training (30 epochs, 600 samples) | 24 seconds |
-
----
-
-## Roadmap
-
-- [ ] LoRA fine-tuning support for efficient personalization
-- [ ] Multi-language support (JavaScript, TypeScript, Rust)
-- [ ] VS Code extension wrapper
-- [ ] CI/CD GitHub Action integration
-- [ ] AST-based diff analysis for PR reviews
-- [ ] Incremental learning from AGNT agent edit telemetry
-
----
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
-
----
-
-Built with ❤️ for the AGNT ecosystem.
+MIT License. See [LICENSE](LICENSE).
