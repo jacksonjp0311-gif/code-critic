@@ -1,0 +1,27 @@
+C:\Users\jacks\AppData\Roaming\Python\Python312\site-packages\torch\nn\modules\transformer.py:379: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+============================================================
+CodeCriticV2 Training
+============================================================
+Model: 1,305,049 parameters (1.31M)
+Vocab: 465, Hidden: 256, Layers: 4, Heads: 4
+
+Generating 5000 labeled training samples...
+Generating 5000 samples from 72 base templates...
+  Base repetitions: 69
+  Augmented samples: 32
+  Generated: 5000 samples
+  Feature shape: (5000, 128)
+  Quality range: [0.000, 1.000]
+  Issue label means: [0.27  0.241 0.118 0.193 0.327 0.377]
+Supervised training for 50 epochs on 4000 samples...
+  Epoch   1/50  train_loss=0.3017  val_loss=0.2230  lr=3.00e-04
+  Epoch  10/50  train_loss=0.1742  val_loss=0.1749  lr=2.71e-04
+  Epoch  20/50  train_loss=0.1726  val_loss=0.1749  lr=1.96e-04
+  Epoch  30/50  train_loss=0.1720  val_loss=0.1747  lr=1.04e-04
+  Epoch  40/50  train_loss=0.1717  val_loss=0.1745  lr=2.86e-05
+  Epoch  50/50  train_loss=0.1716  val_loss=0.1745  lr=0.00e+00
+Supervised training complete in 18592.6s
+Model saved to code_critic_v2.pt (2.51 MB)
+
+Done! Model saved to code_critic_v2.pt
